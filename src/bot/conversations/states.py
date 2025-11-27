@@ -6,31 +6,39 @@ from enum import IntEnum, auto
 
 
 class ApplicationState(IntEnum):
-    """States for the main application conversation."""
+    """
+    Main job application states.
+    These follow the exact order and naming from the project MASTER SPEC.
+    """
 
-    # Initial
-    POSITION_SELECT = auto()
+    # 1. Choose role
+    SELECT_POSITION = auto()
 
-    # Position-specific questions
-    ASKING_QUESTIONS = auto()
+    # 2. If user selects "Other"
+    OTHER_POSITION_TEXT = auto()
 
-    # Personal information
-    ASK_NAME = auto()
-    ASK_EMAIL = auto()
-    ASK_PHONE = auto()
-    ASK_SOCIALS = auto()
+    # 3. Position-specific Q&A
+    POSITION_QUESTIONS = auto()
 
-    # Files
-    ASK_CV = auto()
-    ASK_PROOF_OF_WORK = auto()
+    # 4. Personal info
+    COLLECT_NAME = auto()
+    COLLECT_EMAIL = auto()
+    COLLECT_PHONE = auto()
+    COLLECT_SOCIALS = auto()
 
-    # End
-    CONFIRM = auto()
+    # 5. Files
+    UPLOAD_CV = auto()
+    UPLOAD_PORTFOLIO = auto()
+
+    # 6. Final confirmation
+    CONFIRM_SUBMIT = auto()
 
 
 class QuizState(IntEnum):
-    """States for the quiz conversation."""
+    """
+    Quiz flow states (simple for now).
+    """
 
     QUIZ_START = auto()
     QUIZ_QUESTION = auto()
-    QUIZ_END = auto()
+    QUIZ_FINISH = auto()
