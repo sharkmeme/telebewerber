@@ -2,9 +2,13 @@
 Google Sheets integration for storing applicant data.
 """
 
+import json
 import logging
-from typing import List, Optional
 from datetime import datetime
+from typing import Any, Dict, List
+
+import gspread
+from google.oauth2.service_account import Credentials
 
 from config.settings import settings
 from models.applicant import Applicant
@@ -13,132 +17,66 @@ logger = logging.getLogger(__name__)
 
 
 class SheetsService:
-    """Google Sheets service for storing applicant data."""
+    """
+    Google Sheets integration following the 16-column MASTER SPEC schema.
+    """
 
     def __init__(self):
-        self.sheet_id = settings.GOOGLE_SHEETS_ID
-        self.credentials_file = settings.GOOGLE_SHEETS_CREDENTIALS_FILE
-        self.client = None
-        self.sheet = None
+        creds = Credentials.from_service_account_file(
+            settings.GOOGLE_SHEETS_CREDENTIALS_FILE,
+            scopes=["https://www.googleapis.com/auth/spreadsheets"]
+        )
+        client = gspread.authorize(creds)
+        self.sheet = client.open_by_key(settings.GOOGLE_SHEETS_ID).sheet1
 
-        if self.credentials_file and self.sheet_id:
-            self._initialize_client()
+    def append_applicant_row(self, applicant: Applicant) -> int:
+        """Append a new applicant row and return the row index."""
+        position = applicant.custom_position if applicant.position == "other" else applicant.position
 
-    def _initialize_client(self):
-        """Initialize Google Sheets API client."""
-        try:
-            import gspread
-            from google.oauth2.service_account import Credentials
-
-            scopes = [
-                'https://www.googleapis.com/auth/spreadsheets',
-                'https://www.googleapis.com/auth/drive'
-            ]
-
-            credentials = Credentials.from_service_account_file(
-                self.credentials_file,
-                scopes=scopes
-            )
-
-            self.client = gspread.authorize(credentials)
-            self.sheet = self.client.open_by_key(self.sheet_id).sheet1
-
-            # Ensure headers exist
-            self._ensure_headers()
-
-            logger.info("Google Sheets client initialized successfully")
-
-        except ImportError:
-            logger.error("gspread not installed. Run: pip install gspread google-auth")
-        except FileNotFoundError:
-            logger.error(f"Credentials file not found: {self.credentials_file}")
-        except Exception as e:
-            logger.error(f"Failed to initialize Google Sheets: {e}")
-
-    def _ensure_headers(self):
-        """Ensure the spreadsheet has proper headers."""
-        if not self.sheet:
-            return
-
-        headers = [
-            "Timestamp",
-            "User ID",
-            "Telegram Username",
-            "Position",
-            "Full Name",
-            "Email",
-            "Phone",
-            "Social Links",
-            "CV File ID",
-            "Answers",
-            "Proof of Work",
-            "Quiz Score",
-            "AI Rating",
-            "AI Feedback",
-            "Status",
+        row = [
+            datetime.utcnow().isoformat(),          # 1 timestamp
+            applicant.user_id,                       # 2 telegram_user_id
+            applicant.telegram_username or "",       # 3 telegram_username
+            applicant.full_name or "",               # 4 full_name
+            applicant.email or "",                   # 5 email
+            applicant.phone or "",                   # 6 phone
+            applicant.socials or "",                 # 7 socials
+            position or "",                          # 8 position
+            json.dumps(applicant.answers),           # 9 answers_json
+            applicant.cv_file_id or "",              #10 cv_file_id
+            json.dumps(applicant.portfolio_files),   #11 portfolio_json
+            "",                                      #12 ai_recommendation
+            "",                                      #13 ai_scores_json
+            "",                                      #14 ai_summary
+            "",                                      #15 ai_red_flags_json
+            applicant.status or "submitted",         #16 status
         ]
 
+        self.sheet.append_row(row)
+        return len(self.sheet.get_all_values())
+
+    def update_status(self, row_index: int, status: str) -> None:
+        """Update the status column."""
+        self.sheet.update_cell(row_index, 16, status)
+
+    def update_ai_result(self, row_index: int, ai_result: Dict[str, Any]) -> None:
+        """Write AI evaluation results."""
+        self.sheet.update_cell(row_index, 12, ai_result.get("overall_recommendation", ""))
+        self.sheet.update_cell(row_index, 13, json.dumps(ai_result.get("scores", {})))
+        self.sheet.update_cell(row_index, 14, ai_result.get("short_summary", ""))
+        self.sheet.update_cell(row_index, 15, json.dumps(ai_result.get("red_flags", [])))
+
+    def update_quiz(self, row_index: int, quiz_answers: Dict[str, Any]) -> None:
+        """Merge quiz answers into the answers_json field."""
+        existing_raw = self.sheet.cell(row_index, 9).value or "{}"
         try:
-            existing_headers = self.sheet.row_values(1)
-            if not existing_headers:
-                self.sheet.append_row(headers)
-                logger.info("Created headers in Google Sheet")
-        except Exception as e:
-            logger.error(f"Failed to ensure headers: {e}")
+            existing = json.loads(existing_raw)
+        except Exception:
+            existing = {}
 
-    def save_applicant(self, applicant: Applicant) -> bool:
-        """
-        Save applicant data to Google Sheets.
-
-        Args:
-            applicant: The applicant to save
-
-        Returns:
-            True if successful, False otherwise
-        """
-        if not self.sheet:
-            logger.warning("Google Sheets not configured, skipping save")
-            return False
-
-        try:
-            row = [
-                applicant.completed_at.isoformat() if applicant.completed_at else datetime.now().isoformat(),
-                applicant.user_id,
-                applicant.telegram_username or "",
-                applicant.position or "",
-                applicant.full_name or "",
-                applicant.email or "",
-                applicant.phone or "",
-                applicant.social_links or "",
-                applicant.cv_file_id or "",
-                str(applicant.answers),
-                ", ".join(applicant.proof_of_work),
-                applicant.quiz_score or "",
-                applicant.ai_rating or "",
-                applicant.ai_feedback or "",
-                applicant.status,
-            ]
-
-            self.sheet.append_row(row)
-            logger.info(f"Saved applicant {applicant.user_id} to Google Sheets")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to save applicant to Google Sheets: {e}")
-            return False
-
-    def get_all_applicants(self) -> List[dict]:
-        """Get all applicants from the sheet."""
-        if not self.sheet:
-            logger.warning("Google Sheets not configured")
-            return []
-
-        try:
-            return self.sheet.get_all_records()
-        except Exception as e:
-            logger.error(f"Failed to get applicants from Google Sheets: {e}")
-            return []
+        existing["quiz"] = quiz_answers
+        self.sheet.update_cell(row_index, 9, json.dumps(existing))
 
 
-# Global sheets service instance
+# Singleton instance
 sheets_service = SheetsService()
