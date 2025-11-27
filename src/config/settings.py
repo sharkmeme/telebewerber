@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     HOMEPAGE_URL: str = "https://yourcompany.com"
     INTERVIEW_LINK: str = "https://calendly.com/yourcompany/interview"
 
+    # Deployment Settings
+    MODE: str = "polling"
+    WEBHOOK_URL: str = "https://railway-app-placeholder.up.railway.app"
+    PORT: int = 8080
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
