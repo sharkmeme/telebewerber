@@ -1,0 +1,16 @@
+# Telegram Bot
+python-telegram-bot==21.5
+
+# Settings Management
+pydantic-settings==2.5.2
+
+# Google Sheets Integration
+gspread==6.1.4
+google-auth==2.36.0
+
+# AI Providers
+anthropic==0.39.0
+openai==1.54.5
+
+# Utilities
+python-dotenv==1.0.1
