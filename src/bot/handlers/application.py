@@ -6,7 +6,16 @@ Handles the applicant flow from greeting to submission.
 
 import logging
 from datetime import datetime
-from telegram import Update, InlineKeyboardMarkup
+from typing import Any, Dict, List, Optional
+
+from telegram import (
+    Update,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    InputFile,
+)
 from telegram.ext import (
     ContextTypes,
     ConversationHandler,
@@ -17,346 +26,331 @@ from telegram.ext import (
 )
 
 from bot.conversations.states import ApplicationState
-from bot.conversations.keyboards import (
-    get_positions_keyboard,
-    get_choice_keyboard,
-    get_skip_keyboard,
-    get_confirm_keyboard,
-)
+from config.settings import settings
 from models.applicant import Applicant
-from models.position import get_position, QuestionType
+from models.question_config import POSITIONS
 from services.storage import applicant_storage
-from services.ai_evaluator import ai_evaluator
 from services.sheets import sheets_service
 from bot.handlers.admin import notify_admin_new_applicant
 
 logger = logging.getLogger(__name__)
 
 
+# Helper: build inline keyboard for positions
+def build_positions_keyboard() -> InlineKeyboardMarkup:
+    keyboard = []
+    for pid, pdata in POSITIONS.items():
+        keyboard.append([InlineKeyboardButton(pdata["name"], callback_data=f"pos_{pid}")])
+    return InlineKeyboardMarkup(keyboard)
+
+
+# Start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Start the application process."""
     user = update.effective_user
 
     # Create new applicant session
-    applicant = applicant_storage.create(
+    applicant = Applicant(
         user_id=user.id,
-        telegram_username=user.username
+        telegram_username=user.username,
+    )
+    applicant_storage.save(applicant)
+
+    greet = (
+        "Welcome! 👋\n\n"
+        "This is the official job application bot.\n\n"
+        f"Homepage: {settings.HOMEPAGE_URL}\n\n"
+        "Please select the position you want to apply for:"
     )
 
-    await update.message.reply_text(
-        f"👋 Hello {user.first_name}!\n\n"
-        f"Welcome to our job application bot. "
-        f"We're excited that you're interested in joining our team!\n\n"
-        f"Visit our homepage: [Your Company Website]\n\n"
-        f"Let's get started! Which position are you applying for?",
-        reply_markup=get_positions_keyboard()
-    )
-
-    return ApplicationState.POSITION_SELECT
+    await update.message.reply_text(greet, reply_markup=build_positions_keyboard())
+    return ApplicationState.SELECT_POSITION
 
 
-async def select_position(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle position selection."""
+# Handle position click
+async def position_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
 
-    user_id = update.effective_user.id
-    applicant = applicant_storage.get(user_id)
-
+    applicant = applicant_storage.get(query.from_user.id)
     if not applicant:
         await query.message.reply_text("Session expired. Please /start again.")
         return ConversationHandler.END
 
-    # Extract position ID from callback data
-    position_id = query.data.replace("pos_", "")
-    position = get_position(position_id)
+    # Extract position id
+    pos_raw = query.data.replace("pos_", "", 1)
+    applicant.position = pos_raw
 
-    if not position:
-        await query.message.reply_text("Invalid position. Please try again.")
-        return ApplicationState.POSITION_SELECT
+    if pos_raw == "other":
+        await query.message.reply_text("Please type the job position you want to apply for:")
+        return ApplicationState.OTHER_POSITION_TEXT
 
-    applicant.position = position.name
-    applicant_storage.update(applicant)
+    # Load role questions
+    applicant.answers = {}
+    await ask_next_position_question(update, context, applicant)
+    return ApplicationState.POSITION_QUESTIONS
 
-    # Store position and question index in context
-    context.user_data['position'] = position
-    context.user_data['current_question'] = 0
 
-    await query.edit_message_text(
-        f"Great! You're applying for: {position.name}\n\n"
-        f"{position.description}\n\n"
-        f"I'll ask you a few questions about your background."
+# Handle custom "Other" position text
+async def handle_other_position_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    applicant = applicant_storage.get(update.effective_user.id)
+    applicant.custom_position = update.message.text.strip()
+
+    applicant.answers = {}
+    await ask_next_position_question(update, context, applicant)
+    return ApplicationState.POSITION_QUESTIONS
+
+
+# Helper: ask next question
+def get_question_list(applicant: Applicant) -> List[Dict[str, Any]]:
+    if applicant.position == "other":
+        return []
+    return POSITIONS[applicant.position]["questions"]
+
+
+def get_next_question(applicant: Applicant) -> Optional[Dict[str, Any]]:
+    questions = get_question_list(applicant)
+    answered = len(applicant.answers)
+    if answered >= len(questions):
+        return None
+    return questions[answered]
+
+
+async def ask_next_position_question(update_or_query, context, applicant: Applicant):
+    question = get_next_question(applicant)
+    if not question:
+        # Move to personal info
+        await update_or_query.effective_message.reply_text("What is your full name?")
+        return
+
+    qtext = question["q"]
+    qtype = question["type"]
+
+    if qtype == "text":
+        await update_or_query.effective_message.reply_text(qtext)
+    elif qtype == "choice":
+        buttons = [[InlineKeyboardButton(opt, callback_data=f"ans_{opt}")] for opt in question["options"]]
+        await update_or_query.effective_message.reply_text(qtext, reply_markup=InlineKeyboardMarkup(buttons))
+    elif qtype == "multi_choice":
+        buttons = [
+            [InlineKeyboardButton(f"[ ] {opt}", callback_data=f"mul_{opt}")]
+            for opt in question["options"]
+        ]
+        buttons.append([InlineKeyboardButton("Done", callback_data="mul_done")])
+        await update_or_query.effective_message.reply_text(qtext, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+# Handle answers
+async def handle_text_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    applicant = applicant_storage.get(update.effective_user.id)
+    q = get_next_question(applicant)
+    applicant.answers[q["id"]] = update.message.text.strip()
+
+    # Ask next question
+    if get_next_question(applicant):
+        await ask_next_position_question(update, context, applicant)
+        return ApplicationState.POSITION_QUESTIONS
+
+    # Move to personal info
+    await update.message.reply_text("What is your full name?")
+    return ApplicationState.COLLECT_NAME
+
+
+async def handle_choice_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+
+    applicant = applicant_storage.get(query.from_user.id)
+    q = get_next_question(applicant)
+    choice = query.data.replace("ans_", "", 1)
+    applicant.answers[q["id"]] = choice
+
+    # Ask next
+    if get_next_question(applicant):
+        await ask_next_position_question(update, context, applicant)
+        return ApplicationState.POSITION_QUESTIONS
+
+    await query.message.reply_text("What is your full name?")
+    return ApplicationState.COLLECT_NAME
+
+
+async def handle_multi_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+
+    applicant = applicant_storage.get(query.from_user.id)
+    q = get_next_question(applicant)
+
+    if q["id"] not in applicant.answers:
+        applicant.answers[q["id"]] = []
+
+    if query.data == "mul_done":
+        # Completed multi-selection
+        if get_next_question(applicant):
+            await ask_next_position_question(update, context, applicant)
+            return ApplicationState.POSITION_QUESTIONS
+        await query.message.reply_text("What is your full name?")
+        return ApplicationState.COLLECT_NAME
+
+    choice = query.data.replace("mul_", "", 1)
+    if choice not in applicant.answers[q["id"]]:
+        applicant.answers[q["id"]].append(choice)
+
+    await query.answer("Added")
+    return ApplicationState.POSITION_QUESTIONS
+
+
+# Personal info
+async def handle_name(update: Update, context):
+    applicant = applicant_storage.get(update.effective_user.id)
+    applicant.full_name = update.message.text.strip()
+    await update.message.reply_text("Your email address:")
+    return ApplicationState.COLLECT_EMAIL
+
+
+async def handle_email(update: Update, context):
+    applicant = applicant_storage.get(update.effective_user.id)
+    applicant.email = update.message.text.strip()
+    await update.message.reply_text("Your phone number:")
+    return ApplicationState.COLLECT_PHONE
+
+
+async def handle_phone(update: Update, context):
+    applicant = applicant_storage.get(update.effective_user.id)
+    applicant.phone = update.message.text.strip()
+    await update.message.reply_text("Your social media links or usernames:")
+    return ApplicationState.COLLECT_SOCIALS
+
+
+async def handle_socials(update: Update, context):
+    applicant = applicant_storage.get(update.effective_user.id)
+    applicant.socials = update.message.text.strip()
+    await update.message.reply_text("Please upload your CV as a PDF file.")
+    return ApplicationState.UPLOAD_CV
+
+
+# Handle CV upload
+async def handle_cv(update: Update, context):
+    applicant = applicant_storage.get(update.effective_user.id)
+
+    if not update.message.document:
+        await update.message.reply_text("Please upload a **PDF CV**.")
+        return ApplicationState.UPLOAD_CV
+
+    doc = update.message.document
+    if doc.mime_type != "application/pdf":
+        await update.message.reply_text("Only PDF files are accepted. Upload your CV again.")
+        return ApplicationState.UPLOAD_CV
+
+    applicant.cv_file_id = doc.file_id
+
+    # Portfolio step
+    await update.message.reply_text(
+        "Please upload portfolio files (images, videos, documents, or links).\n"
+        "Send as many as you like.\n"
+        'When done, type "done".'
+    )
+    return ApplicationState.UPLOAD_PORTFOLIO
+
+
+# Handle portfolio
+async def handle_portfolio(update: Update, context):
+    applicant = applicant_storage.get(update.effective_user.id)
+
+    if update.message.text and update.message.text.lower().strip() == "done":
+        # Move to confirmation
+        summary = build_summary(applicant)
+        await update.message.reply_html(summary)
+        await update.message.reply_text("Submit application? (yes / no)")
+        return ApplicationState.CONFIRM_SUBMIT
+
+    # Document or media
+    file_id = None
+    if update.message.document:
+        file_id = update.message.document.file_id
+    elif update.message.photo:
+        file_id = update.message.photo[-1].file_id
+    elif update.message.video:
+        file_id = update.message.video.file_id
+    elif update.message.text:
+        file_id = update.message.text.strip()
+
+    if file_id:
+        applicant.portfolio_files.append(file_id)
+        await update.message.reply_text("Added. Send more or type 'done'.")
+    else:
+        await update.message.reply_text("Unsupported file type. Send a file or a link.")
+    return ApplicationState.UPLOAD_PORTFOLIO
+
+
+# Summary builder
+def build_summary(applicant: Applicant) -> str:
+    pos_name = (
+        applicant.custom_position
+        if applicant.position == "other"
+        else POSITIONS[applicant.position]["name"]
     )
 
-    # Start asking questions
-    return await ask_next_question(update, context)
+    lines = [f"<b>Position:</b> {pos_name}"]
+
+    lines.append("\n<b>Answers:</b>")
+    for qid, ans in applicant.answers.items():
+        lines.append(f"- <b>{qid}</b>: {ans}")
+
+    lines.append("\n<b>Personal Info</b>")
+    lines.append(f"Name: {applicant.full_name}")
+    lines.append(f"Email: {applicant.email}")
+    lines.append(f"Phone: {applicant.phone}")
+    lines.append(f"Socials: {applicant.socials}")
+
+    lines.append("\n<b>Files</b>")
+    lines.append(f"CV: {'Uploaded' if applicant.cv_file_id else 'Missing'}")
+    lines.append(f"Portfolio files: {len(applicant.portfolio_files)}")
+
+    return "\n".join(lines)
 
 
-async def ask_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Ask the next position-specific question."""
-    position = context.user_data.get('position')
-    question_index = context.user_data.get('current_question', 0)
+# Final confirmation
+async def handle_confirmation(update: Update, context):
+    applicant = applicant_storage.get(update.effective_user.id)
+    decision = update.message.text.lower().strip()
 
-    if question_index >= len(position.questions):
-        # Done with questions, move to personal info
-        return await ask_name(update, context)
-
-    question = position.questions[question_index]
-
-    # Build keyboard based on question type
-    keyboard = None
-    if question.question_type == QuestionType.CHOICE:
-        keyboard = get_choice_keyboard(question.choices)
-
-    if update.callback_query:
-        await update.callback_query.message.reply_text(
-            question.text,
-            reply_markup=keyboard
-        )
-    else:
-        await update.message.reply_text(
-            question.text,
-            reply_markup=keyboard
-        )
-
-    context.user_data['current_question_obj'] = question
-
-    return ApplicationState.ASKING_QUESTIONS
-
-
-async def handle_question_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle answer to position-specific question."""
-    user_id = update.effective_user.id
-    applicant = applicant_storage.get(user_id)
-
-    if not applicant:
-        await update.message.reply_text("Session expired. Please /start again.")
+    if decision not in ["yes", "y"]:
+        await update.message.reply_text("Application cancelled.")
         return ConversationHandler.END
 
-    question = context.user_data.get('current_question_obj')
-
-    # Get answer based on message type
-    if update.callback_query:
-        answer = update.callback_query.data.replace("choice_", "")
-        await update.callback_query.answer()
-    else:
-        answer = update.message.text
-
-    # Store answer
-    applicant.answers[question.id] = answer
-    applicant_storage.update(applicant)
-
-    # Move to next question
-    context.user_data['current_question'] += 1
-
-    return await ask_next_question(update, context)
-
-
-async def ask_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Ask for applicant's full name."""
-    if update.callback_query:
-        await update.callback_query.message.reply_text(
-            "Now, let's get your contact information.\n\n"
-            "What's your full name?"
-        )
-    else:
-        await update.message.reply_text(
-            "Now, let's get your contact information.\n\n"
-            "What's your full name?"
-        )
-
-    return ApplicationState.ASK_NAME
-
-
-async def handle_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle name input."""
-    user_id = update.effective_user.id
-    applicant = applicant_storage.get(user_id)
-
-    applicant.full_name = update.message.text
-    applicant_storage.update(applicant)
-
-    await update.message.reply_text("What's your email address?")
-    return ApplicationState.ASK_EMAIL
-
-
-async def handle_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle email input."""
-    user_id = update.effective_user.id
-    applicant = applicant_storage.get(user_id)
-
-    applicant.email = update.message.text
-    applicant_storage.update(applicant)
-
-    await update.message.reply_text("What's your phone number?")
-    return ApplicationState.ASK_PHONE
-
-
-async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle phone input."""
-    user_id = update.effective_user.id
-    applicant = applicant_storage.get(user_id)
-
-    applicant.phone = update.message.text
-    applicant_storage.update(applicant)
-
-    await update.message.reply_text(
-        "Do you have any social media or portfolio links you'd like to share?\n"
-        "(LinkedIn, GitHub, personal website, etc.)\n\n"
-        "Send them or type 'skip' to continue."
-    )
-    return ApplicationState.ASK_SOCIALS
-
-
-async def handle_socials(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle socials input."""
-    user_id = update.effective_user.id
-    applicant = applicant_storage.get(user_id)
-
-    if update.message.text.lower() != 'skip':
-        applicant.social_links = update.message.text
-        applicant_storage.update(applicant)
-
-    await update.message.reply_text(
-        "📄 Please upload your CV (PDF only)."
-    )
-    return ApplicationState.ASK_CV
-
-
-async def handle_cv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle CV upload."""
-    user_id = update.effective_user.id
-    applicant = applicant_storage.get(user_id)
-
-    if update.message.document:
-        applicant.cv_file_id = update.message.document.file_id
-        applicant_storage.update(applicant)
-
-        position = context.user_data.get('position')
-
-        if position.requires_proof_of_work:
-            await update.message.reply_text(
-                f"Great! CV received.\n\n"
-                f"{position.proof_of_work_description}\n\n"
-                f"Please share links or upload files (images/videos).\n"
-                f"Type 'done' when finished."
-            )
-            context.user_data['proof_of_work'] = []
-            return ApplicationState.ASK_PROOF_OF_WORK
-        else:
-            return await finalize_application(update, context)
-    else:
-        await update.message.reply_text("Please send a PDF file.")
-        return ApplicationState.ASK_CV
-
-
-async def handle_proof_of_work(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle proof of work uploads."""
-    user_id = update.effective_user.id
-    applicant = applicant_storage.get(user_id)
-
-    if update.message.text and update.message.text.lower() == 'done':
-        return await finalize_application(update, context)
-
-    # Collect file IDs or links
-    proof_item = None
-    if update.message.photo:
-        proof_item = update.message.photo[-1].file_id
-    elif update.message.video:
-        proof_item = update.message.video.file_id
-    elif update.message.text:
-        proof_item = update.message.text
-
-    if proof_item:
-        applicant.proof_of_work.append(proof_item)
-        applicant_storage.update(applicant)
-        await update.message.reply_text("Added! Send more or type 'done' to continue.")
-
-    return ApplicationState.ASK_PROOF_OF_WORK
-
-
-async def finalize_application(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Finalize and submit the application."""
-    user_id = update.effective_user.id
-    applicant = applicant_storage.get(user_id)
-
-    applicant.completed_at = datetime.now()
-    applicant.status = "completed"
-
-    # Run AI evaluation
-    await update.message.reply_text("Processing your application... 🤖")
-
-    rating, feedback = ai_evaluator.evaluate(applicant)
-    applicant.ai_rating = rating
-    applicant.ai_feedback = feedback
-
-    applicant_storage.update(applicant)
-
     # Save to Google Sheets
-    sheets_service.save_applicant(applicant)
+    row_index = sheets_service.append_applicant_row(applicant)
+    applicant.sheet_row_index = row_index
+    applicant.status = "submitted"
 
     # Notify admin
     await notify_admin_new_applicant(context, applicant)
 
-    await update.message.reply_text(
-        "✅ Thank you for applying!\n\n"
-        "We've received your application and will review it carefully.\n"
-        "We'll be in touch if your profile matches what we're looking for.\n\n"
-        "Good luck! 🍀"
-    )
-
-    # Clean up session
-    applicant_storage.delete(user_id)
-    context.user_data.clear()
-
+    await update.message.reply_text("Application submitted. Thank you!")
     return ConversationHandler.END
 
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Cancel the application."""
-    user_id = update.effective_user.id
-    applicant_storage.delete(user_id)
-    context.user_data.clear()
-
-    await update.message.reply_text(
-        "Application cancelled. Feel free to /start again when you're ready!"
-    )
-    return ConversationHandler.END
-
-
-def get_application_conversation_handler() -> ConversationHandler:
-    """Build and return the application conversation handler."""
+# Conversation handler builder
+def get_application_conversation_handler():
     return ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            ApplicationState.POSITION_SELECT: [
-                CallbackQueryHandler(select_position, pattern="^pos_")
+            ApplicationState.SELECT_POSITION: [CallbackQueryHandler(position_selected)],
+            ApplicationState.OTHER_POSITION_TEXT: [MessageHandler(filters.TEXT, handle_other_position_text)],
+            ApplicationState.POSITION_QUESTIONS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_answer),
+                CallbackQueryHandler(handle_choice_answer, pattern="^ans_"),
+                CallbackQueryHandler(handle_multi_choice, pattern="^(mul_|mul_done)"),
             ],
-            ApplicationState.ASKING_QUESTIONS: [
-                CallbackQueryHandler(handle_question_answer, pattern="^choice_"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question_answer),
+            ApplicationState.COLLECT_NAME: [MessageHandler(filters.TEXT, handle_name)],
+            ApplicationState.COLLECT_EMAIL: [MessageHandler(filters.TEXT, handle_email)],
+            ApplicationState.COLLECT_PHONE: [MessageHandler(filters.TEXT, handle_phone)],
+            ApplicationState.COLLECT_SOCIALS: [MessageHandler(filters.TEXT, handle_socials)],
+            ApplicationState.UPLOAD_CV: [MessageHandler(filters.Document.ALL, handle_cv)],
+            ApplicationState.UPLOAD_PORTFOLIO: [
+                MessageHandler(filters.ALL, handle_portfolio)
             ],
-            ApplicationState.ASK_NAME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_name)
-            ],
-            ApplicationState.ASK_EMAIL: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email)
-            ],
-            ApplicationState.ASK_PHONE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_phone)
-            ],
-            ApplicationState.ASK_SOCIALS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_socials)
-            ],
-            ApplicationState.ASK_CV: [
-                MessageHandler(filters.Document.PDF, handle_cv)
-            ],
-            ApplicationState.ASK_PROOF_OF_WORK: [
-                MessageHandler(
-                    filters.TEXT | filters.PHOTO | filters.VIDEO,
-                    handle_proof_of_work
-                )
-            ],
+            ApplicationState.CONFIRM_SUBMIT: [MessageHandler(filters.TEXT, handle_confirmation)],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[CommandHandler("start", start)],
     )
