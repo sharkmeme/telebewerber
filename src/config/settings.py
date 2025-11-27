@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     MAX_FILE_SIZE_MB: int = 10
     ALLOWED_FILE_TYPES: str = "pdf,jpg,jpeg,png,mp4,mov"
+    HOMEPAGE_URL: str = "https://yourcompany.com"
+    INTERVIEW_LINK: str = "https://calendly.com/yourcompany/interview"
 
     class Config:
         env_file = ".env"

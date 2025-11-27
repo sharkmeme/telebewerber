@@ -2,121 +2,133 @@
 Admin command handlers and notifications.
 """
 
-import logging
-from telegram import Update
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
+import logging
 
 from config.settings import settings
 from models.applicant import Applicant
 from services.storage import applicant_storage
 from services.sheets import sheets_service
-from bot.conversations.keyboards import get_admin_action_keyboard
+from services.ai_evaluator import ai_evaluator
 
 logger = logging.getLogger(__name__)
 
 
+def is_admin(user_id: int) -> bool:
+    return user_id == settings.ADMIN_CHAT_ID
+
+
+def build_admin_keyboard(applicant: Applicant) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🤖 AI Rate Candidate", callback_data=f"admin_ai_rate_{applicant.user_id}")],
+        [InlineKeyboardButton("📝 Send Quiz", callback_data=f"admin_send_quiz_{applicant.user_id}")],
+        [InlineKeyboardButton("📅 Send Interview Link", callback_data=f"admin_send_interview_{applicant.user_id}")]
+    ])
+
+
 async def notify_admin_new_applicant(context: ContextTypes.DEFAULT_TYPE, applicant: Applicant) -> None:
-    """
-    Send notification to admin when a new applicant completes their application.
+    """Send admin the applicant summary after submission."""
+    position = (
+        applicant.custom_position
+        if applicant.position == "other"
+        else applicant.position
+    )
 
-    Args:
-        context: Bot context
-        applicant: The completed applicant
-    """
-    try:
-        message = f"""
-🆕 <b>New Applicant!</b>
+    text = (
+        "📨 <b>New Applicant Submitted</b>\n\n"
+        f"<b>Name:</b> {applicant.full_name}\n"
+        f"<b>Username:</b> @{applicant.telegram_username}\n"
+        f"<b>Position:</b> {position}\n"
+        f"<b>Sheets Row:</b> {applicant.sheet_row_index}\n\n"
+        "<b>Answers:</b>\n"
+        f"{applicant.answers}"
+    )
 
-👤 <b>Name:</b> {applicant.full_name}
-💼 <b>Position:</b> {applicant.position}
-📧 <b>Email:</b> {applicant.email}
-📱 <b>Phone:</b> {applicant.phone}
-🔗 <b>Telegram:</b> @{applicant.telegram_username or 'N/A'}
-
-🤖 <b>AI Rating:</b> {applicant.ai_rating}/10
-💬 <b>AI Feedback:</b> {applicant.ai_feedback}
-
-<b>Answers:</b>
-"""
-        for question_id, answer in applicant.answers.items():
-            message += f"• {question_id}: {answer}\n"
-
-        if applicant.social_links:
-            message += f"\n🌐 <b>Links:</b> {applicant.social_links}"
-
-        if applicant.proof_of_work:
-            message += f"\n📂 <b>Proof of Work:</b> {len(applicant.proof_of_work)} items"
-
-        await context.bot.send_message(
-            chat_id=settings.ADMIN_CHAT_ID,
-            text=message,
-            parse_mode='HTML',
-            reply_markup=get_admin_action_keyboard(applicant.user_id)
-        )
-
-        # Send CV if available
-        if applicant.cv_file_id:
-            await context.bot.send_document(
-                chat_id=settings.ADMIN_CHAT_ID,
-                document=applicant.cv_file_id,
-                caption=f"CV - {applicant.full_name}"
-            )
-
-        logger.info(f"Sent admin notification for applicant {applicant.user_id}")
-
-    except Exception as e:
-        logger.error(f"Failed to send admin notification: {e}")
-
-
-async def admin_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /admin command."""
-    user_id = update.effective_user.id
-
-    if user_id != settings.ADMIN_CHAT_ID:
-        await update.message.reply_text("⛔ Admin only command.")
-        return
-
-    await update.message.reply_text(
-        "🔧 <b>Admin Panel</b>\n\n"
-        "Available commands:\n"
-        "/stats - View application statistics\n"
-        "/export - Export all applicants\n\n"
-        "You'll receive notifications when new applicants complete their applications.",
-        parse_mode='HTML'
+    await context.bot.send_message(
+        chat_id=settings.ADMIN_CHAT_ID,
+        text=text,
+        parse_mode="HTML",
+        reply_markup=build_admin_keyboard(applicant)
     )
 
 
-async def stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /stats command - show application statistics."""
-    user_id = update.effective_user.id
+async def admin_ai_rate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-    if user_id != settings.ADMIN_CHAT_ID:
-        await update.message.reply_text("⛔ Admin only command.")
+    if not is_admin(query.from_user.id):
         return
 
-    # Get stats from storage
-    active_sessions = applicant_storage.count()
+    applicant_id = int(query.data.replace("admin_ai_rate_", ""))
+    applicant = applicant_storage.get(applicant_id)
+    if not applicant:
+        await query.message.reply_text("Applicant not found.")
+        return
 
-    # Get stats from sheets
-    all_applicants = sheets_service.get_all_applicants()
-    total_applicants = len(all_applicants)
+    result = ai_evaluator.evaluate(applicant)
+    applicant.ai_result = result
+    sheets_service.update_ai_result(applicant.sheet_row_index, result)
 
-    # Count by position
-    position_counts = {}
-    for applicant in all_applicants:
-        position = applicant.get('Position', 'Unknown')
-        position_counts[position] = position_counts.get(position, 0) + 1
+    formatted = (
+        "<b>AI Evaluation Result</b>\n\n"
+        f"Recommendation: {result.get('overall_recommendation')}\n"
+        f"Scores: {result.get('scores')}\n"
+        f"Summary: {result.get('short_summary')}\n"
+        f"Red Flags: {result.get('red_flags')}\n"
+    )
 
-    message = f"""
-📊 <b>Application Statistics</b>
+    await query.message.reply_html(formatted)
 
-📝 <b>Total Applications:</b> {total_applicants}
-🔄 <b>Active Sessions:</b> {active_sessions}
 
-<b>By Position:</b>
-"""
+async def admin_send_quiz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-    for position, count in position_counts.items():
-        message += f"• {position}: {count}\n"
+    if not is_admin(query.from_user.id):
+        return
 
-    await update.message.reply_text(message, parse_mode='HTML')
+    applicant_id = int(query.data.replace("admin_send_quiz_", ""))
+    applicant = applicant_storage.get(applicant_id)
+    if not applicant:
+        await query.message.reply_text("Applicant not found.")
+        return
+
+    applicant.status = "quiz_sent"
+    sheets_service.update_status(applicant.sheet_row_index, "quiz_sent")
+
+    await context.bot.send_message(
+        chat_id=applicant.user_id,
+        text="You have received a quiz. Let's begin."
+    )
+
+    # Trigger quiz start
+    from bot.handlers.quiz import start_quiz
+    fake_update = Update(update_id=999999, message=None)
+    await start_quiz(fake_update, context)
+
+    await query.message.reply_text("Quiz sent.")
+
+
+async def admin_send_interview_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(query.from_user.id):
+        return
+
+    applicant_id = int(query.data.replace("admin_send_interview_", ""))
+    applicant = applicant_storage.get(applicant_id)
+    if not applicant:
+        await query.message.reply_text("Applicant not found.")
+        return
+
+    await context.bot.send_message(
+        chat_id=applicant.user_id,
+        text=f"You have been invited to an interview:\n{settings.INTERVIEW_LINK}"
+    )
+
+    applicant.status = "interview_sent"
+    sheets_service.update_status(applicant.sheet_row_index, "interview_sent")
+
+    await query.message.reply_text("Interview link sent.")
