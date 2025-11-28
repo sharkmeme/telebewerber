@@ -42,13 +42,13 @@ def main():
 
     application = ApplicationBuilder().token(settings.TELEGRAM_BOT_TOKEN).build()
 
-    # Add main application handler
-    application.add_handler(get_application_conversation_handler())
-
-    # Admin callback handlers
+    # Admin callback handlers (MUST be added BEFORE ConversationHandlers)
     application.add_handler(CallbackQueryHandler(admin_ai_rate_callback, pattern="^admin_ai_rate_"))
     application.add_handler(CallbackQueryHandler(admin_send_quiz_callback, pattern="^admin_send_quiz_"))
     application.add_handler(CallbackQueryHandler(admin_send_interview_callback, pattern="^admin_send_interview_"))
+
+    # Add main application handler
+    application.add_handler(get_application_conversation_handler())
 
     # Quiz handler
     application.add_handler(get_quiz_conversation_handler())
