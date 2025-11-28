@@ -94,7 +94,7 @@ async def ask_quiz_question(update_or_query, context, applicant, question):
 
     elif qtype == "multi_choice":
         buttons = [[InlineKeyboardButton(f"[ ] {opt}", callback_data=f"quiz_multi_{opt}")] for opt in question["options"]]
-        buttons.append([InlineKeyboardButton("Done", callback_data="quiz_multi_done")])
+        buttons.append([InlineKeyboardButton("Done ✅", callback_data="quiz_multi_done")])
         await update_or_query.effective_message.reply_text(qtext, reply_markup=InlineKeyboardMarkup(buttons))
 
 
@@ -194,8 +194,15 @@ def get_quiz_conversation_handler():
         states={
             QuizState.QUIZ_QUESTION: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_quiz_answer),
+
+                # Multi-choice DONE FIRST
+                CallbackQueryHandler(handle_multi_choice_quiz, pattern="^quiz_multi_done$"),
+
+                # Multi-choice options
+                CallbackQueryHandler(handle_multi_choice_quiz, pattern="^quiz_multi_"),
+
+                # Single choice
                 CallbackQueryHandler(handle_choice_quiz_answer, pattern="^quiz_choice_"),
-                CallbackQueryHandler(handle_multi_choice_quiz, pattern="^quiz_multi_|quiz_multi_done"),
             ],
         },
         fallbacks=[],

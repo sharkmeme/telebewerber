@@ -150,7 +150,7 @@ async def ask_next_position_question(update_or_query, context, applicant: Applic
             [InlineKeyboardButton(f"[ ] {opt}", callback_data=f"mul_{opt}")]
             for opt in question["options"]
         ]
-        buttons.append([InlineKeyboardButton("Done", callback_data="mul_done")])
+        buttons.append([InlineKeyboardButton("Done ✅", callback_data="mul_done")])
         await update_or_query.effective_message.reply_text(qtext, reply_markup=InlineKeyboardMarkup(buttons))
 
     context.user_data["state"] = ApplicationState.POSITION_QUESTIONS
@@ -507,18 +507,22 @@ def get_application_conversation_handler():
             ],
             ApplicationState.COLLECT_NAME: [
                 MessageHandler(filters.TEXT, handle_name),
+                CallbackQueryHandler(skip_current, pattern="^skip_current$"),
                 CallbackQueryHandler(go_back, pattern="^go_back$"),
             ],
             ApplicationState.COLLECT_EMAIL: [
                 MessageHandler(filters.TEXT, handle_email),
+                CallbackQueryHandler(skip_current, pattern="^skip_current$"),
                 CallbackQueryHandler(go_back, pattern="^go_back$"),
             ],
             ApplicationState.COLLECT_PHONE: [
                 MessageHandler(filters.TEXT, handle_phone),
+                CallbackQueryHandler(skip_current, pattern="^skip_current$"),
                 CallbackQueryHandler(go_back, pattern="^go_back$"),
             ],
             ApplicationState.COLLECT_SOCIALS: [
                 MessageHandler(filters.TEXT, handle_socials),
+                CallbackQueryHandler(skip_current, pattern="^skip_current$"),
                 CallbackQueryHandler(go_back, pattern="^go_back$"),
             ],
             ApplicationState.UPLOAD_CV: [
