@@ -180,6 +180,11 @@ async def handle_multi_choice(update: Update, context: ContextTypes.DEFAULT_TYPE
     applicant = applicant_storage.get(query.from_user.id)
     q = get_next_question(applicant)
 
+    # Guard: if no active question, bail out
+    if not q:
+        await query.answer("No active question.")
+        return ApplicationState.POSITION_QUESTIONS
+
     if q["id"] not in applicant.answers:
         applicant.answers[q["id"]] = []
 
@@ -338,9 +343,17 @@ def get_application_conversation_handler():
             ApplicationState.SELECT_POSITION: [CallbackQueryHandler(position_selected)],
             ApplicationState.OTHER_POSITION_TEXT: [MessageHandler(filters.TEXT, handle_other_position_text)],
             ApplicationState.POSITION_QUESTIONS: [
+                # TEXT answers
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_answer),
+
+                # Multi-choice DONE FIRST
+                CallbackQueryHandler(handle_multi_choice, pattern="^mul_done$"),
+
+                # Multi-choice options
+                CallbackQueryHandler(handle_multi_choice, pattern="^mul_"),
+
+                # Single-choice
                 CallbackQueryHandler(handle_choice_answer, pattern="^ans_"),
-                CallbackQueryHandler(handle_multi_choice, pattern="^(mul_|mul_done)"),
             ],
             ApplicationState.COLLECT_NAME: [MessageHandler(filters.TEXT, handle_name)],
             ApplicationState.COLLECT_EMAIL: [MessageHandler(filters.TEXT, handle_email)],
@@ -353,4 +366,5 @@ def get_application_conversation_handler():
             ApplicationState.CONFIRM_SUBMIT: [MessageHandler(filters.TEXT, handle_confirmation)],
         },
         fallbacks=[CommandHandler("start", start)],
+        per_message=True,
     )
