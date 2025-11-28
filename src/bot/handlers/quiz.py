@@ -134,12 +134,25 @@ async def handle_multi_choice_quiz(update: Update, context: ContextTypes.DEFAULT
     await query.answer()
 
     applicant = applicant_storage.get(query.from_user.id)
-    q = get_next_quiz_question(applicant)
 
-    if q["id"] not in applicant.quiz_answers:
+    # Find the current multi-choice quiz question in progress
+    q = None
+    for i, question in enumerate(QUIZ):
+        if question["type"] == "multi_choice" and question["id"] in applicant.quiz_answers and isinstance(applicant.quiz_answers[question["id"]], list):
+            q = question
+            break
+
+    # If no in-progress multi-choice found, this must be the first click
+    if not q:
+        q = get_next_quiz_question(applicant)
+        if not q or q["type"] != "multi_choice":
+            await query.answer("No active multi-choice question.")
+            return QuizState.QUIZ_QUESTION
+        # Initialize answer array
         applicant.quiz_answers[q["id"]] = []
 
     if query.data == "quiz_multi_done":
+        # Move to next question
         next_q = get_next_quiz_question(applicant)
         if next_q:
             await ask_quiz_question(update, context, applicant, next_q)
@@ -147,6 +160,7 @@ async def handle_multi_choice_quiz(update: Update, context: ContextTypes.DEFAULT
 
         return await finish_quiz(update, context, applicant)
 
+    # Add the selected option
     choice = query.data.replace("quiz_multi_", "", 1)
     if choice not in applicant.quiz_answers[q["id"]]:
         applicant.quiz_answers[q["id"]].append(choice)
