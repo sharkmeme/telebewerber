@@ -16,16 +16,15 @@ logger = logging.getLogger(__name__)
 
 class AIEvaluator:
     """
-    AI-based evaluation service using OpenAI gpt-4.1.
-    Produces strict JSON output according to MASTER SPEC.
+    AI-based evaluation using OpenAI gpt-4.1 with strict JSON output.
     """
 
     def __init__(self):
+        # Correct 1.x SDK usage — ONLY api_key allowed
         self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
         self.model = "gpt-4.1"
 
     def evaluate(self, applicant: Applicant) -> Dict[str, Any]:
-        """Evaluate the applicant and return a structured JSON dict."""
         prompt = self._build_prompt(applicant)
 
         for attempt in range(3):
@@ -37,11 +36,13 @@ class AIEvaluator:
                             "role": "system",
                             "content": (
                                 "You are an expert hiring evaluator. "
-                                "You MUST respond ONLY with valid JSON. "
-                                "No explanations. No markdown. No comments."
+                                "You MUST respond ONLY with valid JSON. No markdown."
                             ),
                         },
-                        {"role": "user", "content": prompt},
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
                     ],
                     temperature=0.2,
                 )
@@ -49,7 +50,6 @@ class AIEvaluator:
                 raw = response.choices[0].message.content
                 result = json.loads(raw)
 
-                # Validate required fields
                 if (
                     "overall_recommendation" in result
                     and "scores" in result
@@ -58,26 +58,25 @@ class AIEvaluator:
                 ):
                     return result
 
-                logger.warning("AI JSON missing required fields, attempt=%s", attempt + 1)
+                logger.warning("Invalid JSON from AI attempt=%s", attempt+1)
 
             except Exception as e:
-                logger.warning("AI evaluation error on attempt %s: %s", attempt + 1, e)
+                logger.warning("AI evaluation error attempt=%s: %s", attempt+1, e)
 
-        # Final fallback if all attempts failed
+        # Fallback result
         return {
             "overall_recommendation": "no",
             "scores": {
                 "relevant_skills": 0,
                 "english_level": 0,
                 "communication": 0,
-                "reliability_risk": 10,
+                "reliability_risk": 10
             },
             "short_summary": "AI evaluation failed.",
-            "red_flags": ["AI returned invalid JSON"],
+            "red_flags": ["AI returned invalid JSON"]
         }
 
     def _build_prompt(self, applicant: Applicant) -> str:
-        """Builds the full evaluation prompt."""
         position = applicant.custom_position if applicant.position == "other" else applicant.position
 
         data = {
@@ -89,25 +88,19 @@ class AIEvaluator:
             "socials": applicant.socials,
             "cv_file_id": applicant.cv_file_id,
             "portfolio_files": applicant.portfolio_files,
-            "submitted_at": applicant.started_at.isoformat(),
+            "submitted_at": applicant.started_at.isoformat()
         }
 
         return (
-            "Evaluate this job applicant. Return ONLY valid JSON with fields:\n"
+            "Return ONLY valid JSON with structure:\n"
             "{\n"
-            '  "overall_recommendation": "strong hire" | "hire" | "maybe" | "no",\n'
-            '  "scores": {\n'
-            '    "relevant_skills": int,\n'
-            '    "english_level": int,\n'
-            '    "communication": int,\n'
-            '    "reliability_risk": int\n'
-            "  },\n"
-            '  "short_summary": string,\n'
+            '  "overall_recommendation": "...",\n'
+            '  "scores": { "relevant_skills": int, "english_level": int, "communication": int, "reliability_risk": int },\n'
+            '  "short_summary": "...",\n'
             '  "red_flags": []\n'
             "}\n\n"
-            f"Applicant data:\n{json.dumps(data, indent=2)}"
+            f"Applicant data:\n{json.dumps(data)}"
         )
 
 
-# Singleton instance
 ai_evaluator = AIEvaluator()
