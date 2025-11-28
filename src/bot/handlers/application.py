@@ -366,5 +366,4 @@ def get_application_conversation_handler():
             ApplicationState.CONFIRM_SUBMIT: [MessageHandler(filters.TEXT, handle_confirmation)],
         },
         fallbacks=[CommandHandler("start", start)],
-        per_message=True,
     )
