@@ -397,7 +397,10 @@ async def handle_cv(update: Update, context):
         await update.message.reply_text("Only PDF files are accepted. Upload your CV again.")
         return ApplicationState.UPLOAD_CV
 
-    applicant.cv_file_id = doc.file_id
+    # Get Telegram file URL instead of storing file_id
+    tg_file = await context.bot.get_file(doc.file_id)
+    cv_url = f"https://api.telegram.org/file/bot{settings.TELEGRAM_BOT_TOKEN}/{tg_file.file_path}"
+    applicant.cv_file_id = cv_url
 
     # Portfolio step
     await update.message.reply_text(
@@ -419,19 +422,23 @@ async def handle_portfolio(update: Update, context):
         await update.message.reply_text("Submit application? (yes / no)")
         return ApplicationState.CONFIRM_SUBMIT
 
-    # Document or media
-    file_id = None
+    # Document or media - convert to Telegram file URLs
+    file_url = None
     if update.message.document:
-        file_id = update.message.document.file_id
+        tg_file = await context.bot.get_file(update.message.document.file_id)
+        file_url = f"https://api.telegram.org/file/bot{settings.TELEGRAM_BOT_TOKEN}/{tg_file.file_path}"
     elif update.message.photo:
-        file_id = update.message.photo[-1].file_id
+        tg_file = await context.bot.get_file(update.message.photo[-1].file_id)
+        file_url = f"https://api.telegram.org/file/bot{settings.TELEGRAM_BOT_TOKEN}/{tg_file.file_path}"
     elif update.message.video:
-        file_id = update.message.video.file_id
+        tg_file = await context.bot.get_file(update.message.video.file_id)
+        file_url = f"https://api.telegram.org/file/bot{settings.TELEGRAM_BOT_TOKEN}/{tg_file.file_path}"
     elif update.message.text:
-        file_id = update.message.text.strip()
+        # User-provided text link (not a file upload)
+        file_url = update.message.text.strip()
 
-    if file_id:
-        applicant.portfolio_files.append(file_id)
+    if file_url:
+        applicant.portfolio_files.append(file_url)
         await update.message.reply_text("Added. Send more or type 'done'.")
     else:
         await update.message.reply_text("Unsupported file type. Send a file or a link.")

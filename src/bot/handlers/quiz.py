@@ -171,12 +171,13 @@ async def handle_multi_choice_quiz(update: Update, context: ContextTypes.DEFAULT
 
 async def finish_quiz(update_or_query, context, applicant):
     """Finish quiz, save to Sheets, notify admin."""
-    # Save quiz answers in sheet
+    # INSTANT USER FEEDBACK - Send thank you message FIRST
+    await update_or_query.effective_message.reply_text("Thank you! Your quiz is complete.")
+
+    # Then update sheets and notify admin (no delay for user)
     sheets_service.update_quiz(applicant.sheet_row_index, applicant.quiz_answers)
     sheets_service.update_status(applicant.sheet_row_index, "quiz_completed")
     applicant.status = "quiz_completed"
-
-    await update_or_query.effective_message.reply_text("Thank you! Your quiz is complete.")
 
     # Build quiz summary
     position = applicant.custom_position if applicant.position == "other" else applicant.position
