@@ -47,8 +47,8 @@ def build_positions_keyboard() -> InlineKeyboardMarkup:
 # Helper: navigation buttons (Skip/Back)
 def nav_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Skip", callback_data="skip_current")],
-        [InlineKeyboardButton("Back", callback_data="go_back")]
+        [InlineKeyboardButton("Skip ⏭️", callback_data="skip_current")],
+        [InlineKeyboardButton("Back ⬅️", callback_data="go_back")]
     ])
 
 
@@ -151,7 +151,8 @@ async def ask_next_position_question(update_or_query, context, applicant: Applic
             for opt in question["options"]
         ]
         buttons.append([InlineKeyboardButton("Done ✅", callback_data="mul_done")])
-        await update_or_query.effective_message.reply_text(qtext, reply_markup=InlineKeyboardMarkup(buttons))
+        note = "\n\n<i>💡 Note: You can select multiple answers</i>"
+        await update_or_query.effective_message.reply_text(qtext + note, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
 
     context.user_data["state"] = ApplicationState.POSITION_QUESTIONS
     return ApplicationState.POSITION_QUESTIONS

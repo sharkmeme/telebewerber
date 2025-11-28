@@ -95,7 +95,8 @@ async def ask_quiz_question(update_or_query, context, applicant, question):
     elif qtype == "multi_choice":
         buttons = [[InlineKeyboardButton(f"[ ] {opt}", callback_data=f"quiz_multi_{opt}")] for opt in question["options"]]
         buttons.append([InlineKeyboardButton("Done ✅", callback_data="quiz_multi_done")])
-        await update_or_query.effective_message.reply_text(qtext, reply_markup=InlineKeyboardMarkup(buttons))
+        note = "\n\n<i>💡 Note: You can select multiple answers</i>"
+        await update_or_query.effective_message.reply_text(qtext + note, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
 
 
 async def handle_text_quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -177,10 +178,41 @@ async def finish_quiz(update_or_query, context, applicant):
 
     await update_or_query.effective_message.reply_text("Thank you! Your quiz is complete.")
 
-    # Notify admin
+    # Build quiz summary
+    position = applicant.custom_position if applicant.position == "other" else applicant.position
+    quiz_summary = []
+    for question in QUIZ:
+        qid = question["id"]
+        if qid in applicant.quiz_answers:
+            answer = applicant.quiz_answers[qid]
+            if isinstance(answer, list):
+                answer_str = ", ".join(answer) if answer else "(no selection)"
+            else:
+                answer_str = str(answer)
+            quiz_summary.append(f"<b>{question['q']}</b>\n→ {answer_str}")
+
+    quiz_text = "\n\n".join(quiz_summary)
+
+    # Notify admin with comprehensive summary
+    admin_message = (
+        "📝 <b>Quiz Completed</b>\n\n"
+        f"<b>Applicant:</b> {applicant.full_name} (@{applicant.telegram_username})\n"
+        f"<b>Position:</b> {position}\n"
+        f"<b>Sheet Row:</b> {applicant.sheet_row_index}\n\n"
+        f"<b>Quiz Answers:</b>\n\n{quiz_text}"
+    )
+
+    # Admin action buttons
+    admin_buttons = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🤖 AI Rate Candidate", callback_data=f"admin_ai_rate_{applicant.user_id}")],
+        [InlineKeyboardButton("📅 Send Interview Link", callback_data=f"admin_send_interview_{applicant.user_id}")]
+    ])
+
     await context.bot.send_message(
         chat_id=settings.ADMIN_CHAT_ID,
-        text=f"Applicant {applicant.full_name} (@{applicant.telegram_username}) has completed the quiz."
+        text=admin_message,
+        parse_mode="HTML",
+        reply_markup=admin_buttons
     )
 
     return ConversationHandler.END
