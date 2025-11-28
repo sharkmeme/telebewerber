@@ -346,6 +346,7 @@ async def handle_name(update: Update, context):
     applicant = applicant_storage.get(update.effective_user.id)
     applicant.history.append("COLLECT_NAME")
     applicant.full_name = update.message.text.strip()
+    context.user_data["state"] = ApplicationState.COLLECT_EMAIL
     await update.message.reply_text("Your email address:", reply_markup=nav_keyboard())
     return ApplicationState.COLLECT_EMAIL
 
@@ -354,6 +355,7 @@ async def handle_email(update: Update, context):
     applicant = applicant_storage.get(update.effective_user.id)
     applicant.history.append("COLLECT_EMAIL")
     applicant.email = update.message.text.strip()
+    context.user_data["state"] = ApplicationState.COLLECT_PHONE
     await update.message.reply_text("Your phone number:", reply_markup=nav_keyboard())
     return ApplicationState.COLLECT_PHONE
 
@@ -362,6 +364,7 @@ async def handle_phone(update: Update, context):
     applicant = applicant_storage.get(update.effective_user.id)
     applicant.history.append("COLLECT_PHONE")
     applicant.phone = update.message.text.strip()
+    context.user_data["state"] = ApplicationState.COLLECT_SOCIALS
     await update.message.reply_text("Your social media links or usernames:", reply_markup=nav_keyboard())
     return ApplicationState.COLLECT_SOCIALS
 
@@ -370,6 +373,7 @@ async def handle_socials(update: Update, context):
     applicant = applicant_storage.get(update.effective_user.id)
     applicant.history.append("COLLECT_SOCIALS")
     applicant.socials = update.message.text.strip()
+    context.user_data["state"] = ApplicationState.UPLOAD_CV
     await update.message.reply_text(
         "Please upload your CV as a PDF file.\n\nIf you don't have a CV, tap Skip.",
         reply_markup=InlineKeyboardMarkup([

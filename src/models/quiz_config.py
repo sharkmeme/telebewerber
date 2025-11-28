@@ -23,7 +23,7 @@ QUIZ: List[Dict[str, Any]] = [
     },
     {
         "id": "workflow_analysis",
-        "type": "multi_choice",
+        "type": "choice",
         "q": "You are given a dataset with thousands of entries to improve a workflow. Which approaches would you consider first?",
         "options": [
             "Identify repeating patterns or bottlenecks",
