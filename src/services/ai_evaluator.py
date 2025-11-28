@@ -24,8 +24,8 @@ class AIEvaluator:
         self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
         self.model = "gpt-4.1"
 
-    def evaluate(self, applicant: Applicant) -> Dict[str, Any]:
-        prompt = self._build_prompt(applicant)
+    def evaluate(self, applicant: Applicant, include_quiz: bool = False) -> Dict[str, Any]:
+        prompt = self._build_prompt(applicant, include_quiz)
 
         for attempt in range(3):
             try:
@@ -76,7 +76,7 @@ class AIEvaluator:
             "red_flags": ["AI returned invalid JSON"]
         }
 
-    def _build_prompt(self, applicant: Applicant) -> str:
+    def _build_prompt(self, applicant: Applicant, include_quiz: bool = False) -> str:
         position = applicant.custom_position if applicant.position == "other" else applicant.position
 
         data = {
@@ -90,6 +90,11 @@ class AIEvaluator:
             "portfolio_files": applicant.portfolio_files,
             "submitted_at": applicant.started_at.isoformat()
         }
+
+        if include_quiz:
+            data["quiz_answers"] = applicant.quiz_answers
+        else:
+            data["quiz_answers"] = {}
 
         return (
             "Return ONLY valid JSON with structure:\n"

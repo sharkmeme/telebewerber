@@ -290,30 +290,35 @@ async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not applicant.history:
         await query.message.reply_text("Cannot go back further.")
+        context.user_data["state"] = ApplicationState.SELECT_POSITION
         return ApplicationState.SELECT_POSITION
 
     last = applicant.history.pop()
 
     if last == "POSITION_QUESTIONS":
-        await ask_next_position_question(update, context, applicant)
-        return ApplicationState.POSITION_QUESTIONS
+        return await ask_next_position_question(update, context, applicant)
 
     if last == "COLLECT_NAME":
         await query.message.reply_text("What is your full name?", reply_markup=nav_keyboard())
+        context.user_data["state"] = ApplicationState.COLLECT_NAME
         return ApplicationState.COLLECT_NAME
 
     if last == "COLLECT_EMAIL":
         await query.message.reply_text("Your email address:", reply_markup=nav_keyboard())
+        context.user_data["state"] = ApplicationState.COLLECT_EMAIL
         return ApplicationState.COLLECT_EMAIL
 
     if last == "COLLECT_PHONE":
         await query.message.reply_text("Your phone number:", reply_markup=nav_keyboard())
+        context.user_data["state"] = ApplicationState.COLLECT_PHONE
         return ApplicationState.COLLECT_PHONE
 
     if last == "COLLECT_SOCIALS":
         await query.message.reply_text("Your social media links or usernames:", reply_markup=nav_keyboard())
+        context.user_data["state"] = ApplicationState.COLLECT_SOCIALS
         return ApplicationState.COLLECT_SOCIALS
 
+    context.user_data["state"] = ApplicationState.SELECT_POSITION
     return ApplicationState.SELECT_POSITION
 
 

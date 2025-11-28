@@ -66,7 +66,8 @@ async def admin_ai_rate_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.message.reply_text("Applicant not found.")
         return
 
-    result = ai_evaluator.evaluate(applicant)
+    include_quiz = bool(applicant.quiz_answers)
+    result = ai_evaluator.evaluate(applicant, include_quiz=include_quiz)
     applicant.ai_result = result
     sheets_service.update_ai_result(applicant.sheet_row_index, result)
 
