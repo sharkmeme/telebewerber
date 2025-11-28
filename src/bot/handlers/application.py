@@ -134,7 +134,8 @@ async def ask_next_position_question(update_or_query, context, applicant: Applic
     if not question:
         # Move to personal info
         await update_or_query.effective_message.reply_text("What is your full name?", reply_markup=nav_keyboard())
-        return
+        context.user_data["state"] = ApplicationState.COLLECT_NAME
+        return ApplicationState.COLLECT_NAME
 
     qtext = question["q"]
     qtype = question["type"]
@@ -151,6 +152,9 @@ async def ask_next_position_question(update_or_query, context, applicant: Applic
         ]
         buttons.append([InlineKeyboardButton("Done", callback_data="mul_done")])
         await update_or_query.effective_message.reply_text(qtext, reply_markup=InlineKeyboardMarkup(buttons))
+
+    context.user_data["state"] = ApplicationState.POSITION_QUESTIONS
+    return ApplicationState.POSITION_QUESTIONS
 
 
 # Handle answers
@@ -197,6 +201,7 @@ async def handle_multi_choice(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Guard: if no active question, bail out
     if not q:
         await query.answer("No active question.")
+        context.user_data["state"] = ApplicationState.POSITION_QUESTIONS
         return ApplicationState.POSITION_QUESTIONS
 
     if q["id"] not in applicant.answers:
@@ -205,9 +210,9 @@ async def handle_multi_choice(update: Update, context: ContextTypes.DEFAULT_TYPE
     if query.data == "mul_done":
         # Completed multi-selection
         if get_next_question(applicant):
-            await ask_next_position_question(update, context, applicant)
-            return ApplicationState.POSITION_QUESTIONS
+            return await ask_next_position_question(update, context, applicant)
         await query.message.reply_text("What is your full name?", reply_markup=nav_keyboard())
+        context.user_data["state"] = ApplicationState.COLLECT_NAME
         return ApplicationState.COLLECT_NAME
 
     choice = query.data.replace("mul_", "", 1)
@@ -215,6 +220,7 @@ async def handle_multi_choice(update: Update, context: ContextTypes.DEFAULT_TYPE
         applicant.answers[q["id"]].append(choice)
 
     await query.answer("Added")
+    context.user_data["state"] = ApplicationState.POSITION_QUESTIONS
     return ApplicationState.POSITION_QUESTIONS
 
 
@@ -222,17 +228,57 @@ async def handle_multi_choice(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def skip_current(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer("Skipped.")
-
     applicant = applicant_storage.get(query.from_user.id)
-    q = get_next_question(applicant)
+    state = context.user_data.get("state")
 
-    # Skip logic: store empty answer
-    if q:
-        applicant.answers[q["id"]] = ""
+    # POSITION QUESTIONS
+    if state == ApplicationState.POSITION_QUESTIONS:
+        q = get_next_question(applicant)
+        if q:
+            applicant.answers[q["id"]] = ""
+        return await ask_next_position_question(update, context, applicant)
 
-    # Ask next question
-    await ask_next_position_question(update, context, applicant)
-    return ApplicationState.POSITION_QUESTIONS
+    # NAME
+    if state == ApplicationState.COLLECT_NAME:
+        applicant.full_name = ""
+        await query.message.reply_text(
+            "Your email address:", reply_markup=nav_keyboard()
+        )
+        context.user_data["state"] = ApplicationState.COLLECT_EMAIL
+        return ApplicationState.COLLECT_EMAIL
+
+    # EMAIL
+    if state == ApplicationState.COLLECT_EMAIL:
+        applicant.email = ""
+        await query.message.reply_text(
+            "Your phone number:", reply_markup=nav_keyboard()
+        )
+        context.user_data["state"] = ApplicationState.COLLECT_PHONE
+        return ApplicationState.COLLECT_PHONE
+
+    # PHONE
+    if state == ApplicationState.COLLECT_PHONE:
+        applicant.phone = ""
+        await query.message.reply_text(
+            "Your social media links or usernames:", reply_markup=nav_keyboard()
+        )
+        context.user_data["state"] = ApplicationState.COLLECT_SOCIALS
+        return ApplicationState.COLLECT_SOCIALS
+
+    # SOCIALS
+    if state == ApplicationState.COLLECT_SOCIALS:
+        applicant.socials = ""
+        await query.message.reply_text(
+            "Please upload your CV as a PDF file.\nOr tap Skip.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("Skip CV", callback_data="skip_cv")],
+                [InlineKeyboardButton("Back", callback_data="go_back")]
+            ])
+        )
+        context.user_data["state"] = ApplicationState.UPLOAD_CV
+        return ApplicationState.UPLOAD_CV
+
+    return ApplicationState.SELECT_POSITION
 
 
 # Back navigation
