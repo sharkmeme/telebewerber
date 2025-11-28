@@ -47,5 +47,8 @@ class Applicant:
     # Google Sheets row
     sheet_row_index: Optional[int] = None
 
+    # Navigation history for back button
+    history: List[str] = field(default_factory=list)
+
     # Internal metadata
     started_at: datetime = field(default_factory=datetime.utcnow)

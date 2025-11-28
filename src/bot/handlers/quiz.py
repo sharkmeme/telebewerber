@@ -24,6 +24,26 @@ def get_next_quiz_question(applicant):
     return QUIZ[answered]
 
 
+async def start_quiz_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Starts the quiz when applicant clicks the Start Quiz button."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    applicant = applicant_storage.get(user_id)
+
+    if not applicant:
+        await query.message.reply_text("Session not found. Please contact admin.")
+        return ConversationHandler.END
+
+    applicant.quiz_answers = {}
+
+    # Ask first question
+    q = QUIZ[0]
+    await ask_quiz_question(update, context, applicant, q)
+    return QuizState.QUIZ_QUESTION
+
+
 async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Starts the quiz for the applicant."""
     # Identify applicant - admin triggered it, so context.user_data must track target
@@ -154,7 +174,9 @@ async def finish_quiz(update_or_query, context, applicant):
 
 def get_quiz_conversation_handler():
     return ConversationHandler(
-        entry_points=[],
+        entry_points=[
+            CallbackQueryHandler(start_quiz_now, pattern="^start_quiz_now$"),
+        ],
         states={
             QuizState.QUIZ_QUESTION: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_quiz_answer),

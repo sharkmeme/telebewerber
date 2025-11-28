@@ -44,6 +44,14 @@ def build_positions_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 
+# Helper: navigation buttons (Skip/Back)
+def nav_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Skip", callback_data="skip_current")],
+        [InlineKeyboardButton("Back", callback_data="go_back")]
+    ])
+
+
 # Start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
@@ -57,9 +65,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     greet = (
         "Welcome! 👋\n\n"
-        "This is the official job application bot.\n\n"
+        "Thank you for applying at Bunny Honey Club.\n\n"
+        "Our hiring process is simple:\n"
+        "1) Apply using this bot\n"
+        "2) You may receive a short quiz\n"
+        "3) We evaluate your answers\n"
+        "4) Selected applicants receive an interview invitation\n\n"
         f"Homepage: {settings.HOMEPAGE_URL}\n\n"
-        "Please select the position you want to apply for:"
+        "Please select the position you are applying for:"
     )
 
     await update.message.reply_text(greet, reply_markup=build_positions_keyboard())
@@ -116,10 +129,11 @@ def get_next_question(applicant: Applicant) -> Optional[Dict[str, Any]]:
 
 
 async def ask_next_position_question(update_or_query, context, applicant: Applicant):
+    applicant.history.append("POSITION_QUESTIONS")
     question = get_next_question(applicant)
     if not question:
         # Move to personal info
-        await update_or_query.effective_message.reply_text("What is your full name?")
+        await update_or_query.effective_message.reply_text("What is your full name?", reply_markup=nav_keyboard())
         return
 
     qtext = question["q"]
@@ -151,7 +165,7 @@ async def handle_text_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ApplicationState.POSITION_QUESTIONS
 
     # Move to personal info
-    await update.message.reply_text("What is your full name?")
+    await update.message.reply_text("What is your full name?", reply_markup=nav_keyboard())
     return ApplicationState.COLLECT_NAME
 
 
@@ -169,7 +183,7 @@ async def handle_choice_answer(update: Update, context: ContextTypes.DEFAULT_TYP
         await ask_next_position_question(update, context, applicant)
         return ApplicationState.POSITION_QUESTIONS
 
-    await query.message.reply_text("What is your full name?")
+    await query.message.reply_text("What is your full name?", reply_markup=nav_keyboard())
     return ApplicationState.COLLECT_NAME
 
 
@@ -193,7 +207,7 @@ async def handle_multi_choice(update: Update, context: ContextTypes.DEFAULT_TYPE
         if get_next_question(applicant):
             await ask_next_position_question(update, context, applicant)
             return ApplicationState.POSITION_QUESTIONS
-        await query.message.reply_text("What is your full name?")
+        await query.message.reply_text("What is your full name?", reply_markup=nav_keyboard())
         return ApplicationState.COLLECT_NAME
 
     choice = query.data.replace("mul_", "", 1)
@@ -204,32 +218,108 @@ async def handle_multi_choice(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ApplicationState.POSITION_QUESTIONS
 
 
+# Skip current question
+async def skip_current(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer("Skipped.")
+
+    applicant = applicant_storage.get(query.from_user.id)
+    q = get_next_question(applicant)
+
+    # Skip logic: store empty answer
+    if q:
+        applicant.answers[q["id"]] = ""
+
+    # Ask next question
+    await ask_next_position_question(update, context, applicant)
+    return ApplicationState.POSITION_QUESTIONS
+
+
+# Back navigation
+async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    applicant = applicant_storage.get(query.from_user.id)
+
+    if not applicant.history:
+        await query.message.reply_text("Cannot go back further.")
+        return ApplicationState.SELECT_POSITION
+
+    last = applicant.history.pop()
+
+    if last == "POSITION_QUESTIONS":
+        await ask_next_position_question(update, context, applicant)
+        return ApplicationState.POSITION_QUESTIONS
+
+    if last == "COLLECT_NAME":
+        await query.message.reply_text("What is your full name?", reply_markup=nav_keyboard())
+        return ApplicationState.COLLECT_NAME
+
+    if last == "COLLECT_EMAIL":
+        await query.message.reply_text("Your email address:", reply_markup=nav_keyboard())
+        return ApplicationState.COLLECT_EMAIL
+
+    if last == "COLLECT_PHONE":
+        await query.message.reply_text("Your phone number:", reply_markup=nav_keyboard())
+        return ApplicationState.COLLECT_PHONE
+
+    if last == "COLLECT_SOCIALS":
+        await query.message.reply_text("Your social media links or usernames:", reply_markup=nav_keyboard())
+        return ApplicationState.COLLECT_SOCIALS
+
+    return ApplicationState.SELECT_POSITION
+
+
+# Skip CV upload
+async def skip_cv(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    applicant = applicant_storage.get(query.from_user.id)
+    applicant.cv_file_id = None
+
+    await query.message.reply_text(
+        'Please upload portfolio files.\nWhen done, type "done".'
+    )
+    return ApplicationState.UPLOAD_PORTFOLIO
+
+
 # Personal info
 async def handle_name(update: Update, context):
     applicant = applicant_storage.get(update.effective_user.id)
+    applicant.history.append("COLLECT_NAME")
     applicant.full_name = update.message.text.strip()
-    await update.message.reply_text("Your email address:")
+    await update.message.reply_text("Your email address:", reply_markup=nav_keyboard())
     return ApplicationState.COLLECT_EMAIL
 
 
 async def handle_email(update: Update, context):
     applicant = applicant_storage.get(update.effective_user.id)
+    applicant.history.append("COLLECT_EMAIL")
     applicant.email = update.message.text.strip()
-    await update.message.reply_text("Your phone number:")
+    await update.message.reply_text("Your phone number:", reply_markup=nav_keyboard())
     return ApplicationState.COLLECT_PHONE
 
 
 async def handle_phone(update: Update, context):
     applicant = applicant_storage.get(update.effective_user.id)
+    applicant.history.append("COLLECT_PHONE")
     applicant.phone = update.message.text.strip()
-    await update.message.reply_text("Your social media links or usernames:")
+    await update.message.reply_text("Your social media links or usernames:", reply_markup=nav_keyboard())
     return ApplicationState.COLLECT_SOCIALS
 
 
 async def handle_socials(update: Update, context):
     applicant = applicant_storage.get(update.effective_user.id)
+    applicant.history.append("COLLECT_SOCIALS")
     applicant.socials = update.message.text.strip()
-    await update.message.reply_text("Please upload your CV as a PDF file.")
+    await update.message.reply_text(
+        "Please upload your CV as a PDF file.\n\nIf you don't have a CV, tap Skip.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("Skip CV", callback_data="skip_cv")]
+        ])
+    )
     return ApplicationState.UPLOAD_CV
 
 
@@ -354,12 +444,31 @@ def get_application_conversation_handler():
 
                 # Single-choice
                 CallbackQueryHandler(handle_choice_answer, pattern="^ans_"),
+
+                # Navigation
+                CallbackQueryHandler(skip_current, pattern="^skip_current$"),
+                CallbackQueryHandler(go_back, pattern="^go_back$"),
             ],
-            ApplicationState.COLLECT_NAME: [MessageHandler(filters.TEXT, handle_name)],
-            ApplicationState.COLLECT_EMAIL: [MessageHandler(filters.TEXT, handle_email)],
-            ApplicationState.COLLECT_PHONE: [MessageHandler(filters.TEXT, handle_phone)],
-            ApplicationState.COLLECT_SOCIALS: [MessageHandler(filters.TEXT, handle_socials)],
-            ApplicationState.UPLOAD_CV: [MessageHandler(filters.Document.ALL, handle_cv)],
+            ApplicationState.COLLECT_NAME: [
+                MessageHandler(filters.TEXT, handle_name),
+                CallbackQueryHandler(go_back, pattern="^go_back$"),
+            ],
+            ApplicationState.COLLECT_EMAIL: [
+                MessageHandler(filters.TEXT, handle_email),
+                CallbackQueryHandler(go_back, pattern="^go_back$"),
+            ],
+            ApplicationState.COLLECT_PHONE: [
+                MessageHandler(filters.TEXT, handle_phone),
+                CallbackQueryHandler(go_back, pattern="^go_back$"),
+            ],
+            ApplicationState.COLLECT_SOCIALS: [
+                MessageHandler(filters.TEXT, handle_socials),
+                CallbackQueryHandler(go_back, pattern="^go_back$"),
+            ],
+            ApplicationState.UPLOAD_CV: [
+                MessageHandler(filters.Document.ALL, handle_cv),
+                CallbackQueryHandler(skip_cv, pattern="^skip_cv$"),
+            ],
             ApplicationState.UPLOAD_PORTFOLIO: [
                 MessageHandler(filters.ALL, handle_portfolio)
             ],

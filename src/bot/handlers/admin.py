@@ -99,13 +99,11 @@ async def admin_send_quiz_callback(update: Update, context: ContextTypes.DEFAULT
 
     await context.bot.send_message(
         chat_id=applicant.user_id,
-        text="You have received a quiz. Let's begin."
+        text="You have received a quiz. Tap below to begin.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("Start Quiz", callback_data="start_quiz_now")]
+        ])
     )
-
-    # Trigger quiz start
-    from bot.handlers.quiz import start_quiz
-    fake_update = Update(update_id=999999, message=None)
-    await start_quiz(fake_update, context)
 
     await query.message.reply_text("Quiz sent.")
 
