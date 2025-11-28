@@ -4,9 +4,8 @@ python-telegram-bot==21.5
 # Settings Management
 pydantic-settings==2.5.2
 
-# Google Sheets Integration
-gspread==6.1.4
-google-auth==2.36.0
+# HTTP Requests
+requests==2.31.0
 
 # AI Providers
 anthropic==0.39.0

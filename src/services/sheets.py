@@ -4,12 +4,9 @@ Google Sheets integration for storing applicant data.
 
 import json
 import logging
-import os
+import requests
 from datetime import datetime
-from typing import Any, Dict, List
-
-import gspread
-from google.oauth2.service_account import Credentials
+from typing import Any, Dict
 
 from config.settings import settings
 from models.applicant import Applicant
@@ -19,82 +16,53 @@ logger = logging.getLogger(__name__)
 
 class SheetsService:
     """
-    Google Sheets integration following the 16-column MASTER SPEC schema.
+    Sends applicant data to Google Apps Script Webhook instead of using Google Sheets API.
     """
 
     def __init__(self):
-        # Load credentials from JSON environment variable
-        credentials_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
-        if credentials_json:
-            info = json.loads(credentials_json)
-            creds = Credentials.from_service_account_info(
-                info,
-                scopes=["https://www.googleapis.com/auth/spreadsheets"]
-            )
-            client = gspread.authorize(creds)
-            self.sheet = client.open_by_key(settings.GOOGLE_SHEETS_ID).sheet1
-        else:
-            logger.warning("GOOGLE_CREDENTIALS_JSON not set, Google Sheets disabled")
-            self.sheet = None
+        self.webhook_url = settings.GOOGLE_SHEETS_WEBHOOK_URL
 
     def append_applicant_row(self, applicant: Applicant) -> int:
-        """Append a new applicant row and return the row index."""
-        if not self.sheet:
-            logger.warning("Google Sheets not configured, skipping append")
+        if not self.webhook_url:
+            logger.warning("No Google Sheets webhook URL configured.")
             return 0
 
-        position = applicant.custom_position if applicant.position == "other" else applicant.position
+        payload = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "telegram_user_id": applicant.user_id,
+            "telegram_username": applicant.telegram_username,
+            "full_name": applicant.full_name,
+            "email": applicant.email,
+            "phone": applicant.phone,
+            "socials": applicant.socials,
+            "position": applicant.custom_position if applicant.position == "other" else applicant.position,
+            "answers": applicant.answers,
+            "cv_file_id": applicant.cv_file_id,
+            "portfolio": applicant.portfolio_files,
+            "ai_recommendation": "",
+            "ai_scores": {},
+            "ai_summary": "",
+            "red_flags": [],
+            "status": applicant.status,
+        }
 
-        row = [
-            datetime.utcnow().isoformat(),          # 1 timestamp
-            applicant.user_id,                       # 2 telegram_user_id
-            applicant.telegram_username or "",       # 3 telegram_username
-            applicant.full_name or "",               # 4 full_name
-            applicant.email or "",                   # 5 email
-            applicant.phone or "",                   # 6 phone
-            applicant.socials or "",                 # 7 socials
-            position or "",                          # 8 position
-            json.dumps(applicant.answers),           # 9 answers_json
-            applicant.cv_file_id or "",              #10 cv_file_id
-            json.dumps(applicant.portfolio_files),   #11 portfolio_json
-            "",                                      #12 ai_recommendation
-            "",                                      #13 ai_scores_json
-            "",                                      #14 ai_summary
-            "",                                      #15 ai_red_flags_json
-            applicant.status or "submitted",         #16 status
-        ]
+        requests.post(self.webhook_url, json=payload)
+        return 1  # No row index needed anymore
 
-        self.sheet.append_row(row)
-        return len(self.sheet.get_all_values())
-
-    def update_status(self, row_index: int, status: str) -> None:
-        """Update the status column."""
-        if not self.sheet:
+    def update_status(self, row_index: int, status: str):
+        if not self.webhook_url:
             return
-        self.sheet.update_cell(row_index, 16, status)
+        # No-op: Apps Script does not support row updates without API credentials.
 
-    def update_ai_result(self, row_index: int, ai_result: Dict[str, Any]) -> None:
-        """Write AI evaluation results."""
-        if not self.sheet:
+    def update_ai_result(self, row_index: int, ai_result: Dict[str, Any]):
+        if not self.webhook_url:
             return
-        self.sheet.update_cell(row_index, 12, ai_result.get("overall_recommendation", ""))
-        self.sheet.update_cell(row_index, 13, json.dumps(ai_result.get("scores", {})))
-        self.sheet.update_cell(row_index, 14, ai_result.get("short_summary", ""))
-        self.sheet.update_cell(row_index, 15, json.dumps(ai_result.get("red_flags", [])))
+        # No-op due to webhook architecture.
 
-    def update_quiz(self, row_index: int, quiz_answers: Dict[str, Any]) -> None:
-        """Merge quiz answers into the answers_json field."""
-        if not self.sheet:
+    def update_quiz(self, row_index: int, quiz_answers: Dict[str, Any]):
+        if not self.webhook_url:
             return
-        existing_raw = self.sheet.cell(row_index, 9).value or "{}"
-        try:
-            existing = json.loads(existing_raw)
-        except Exception:
-            existing = {}
-
-        existing["quiz"] = quiz_answers
-        self.sheet.update_cell(row_index, 9, json.dumps(existing))
+        # No-op due to webhook architecture.
 
 
-# Singleton instance
 sheets_service = SheetsService()

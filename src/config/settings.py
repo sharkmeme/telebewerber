@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     ADMIN_CHAT_ID: int
 
     # Google Sheets
-    GOOGLE_CREDENTIALS_JSON: Optional[str] = None
+    GOOGLE_SHEETS_WEBHOOK_URL: Optional[str] = None
     GOOGLE_SHEETS_ID: str = ""
 
     # AI Evaluation
