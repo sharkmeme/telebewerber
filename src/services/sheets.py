@@ -4,6 +4,7 @@ Google Sheets integration for storing applicant data.
 
 import json
 import logging
+import os
 from datetime import datetime
 from typing import Any, Dict, List
 
@@ -22,15 +23,26 @@ class SheetsService:
     """
 
     def __init__(self):
-        creds = Credentials.from_service_account_file(
-            settings.GOOGLE_SHEETS_CREDENTIALS_FILE,
-            scopes=["https://www.googleapis.com/auth/spreadsheets"]
-        )
-        client = gspread.authorize(creds)
-        self.sheet = client.open_by_key(settings.GOOGLE_SHEETS_ID).sheet1
+        # Load credentials from JSON environment variable
+        credentials_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+        if credentials_json:
+            info = json.loads(credentials_json)
+            creds = Credentials.from_service_account_info(
+                info,
+                scopes=["https://www.googleapis.com/auth/spreadsheets"]
+            )
+            client = gspread.authorize(creds)
+            self.sheet = client.open_by_key(settings.GOOGLE_SHEETS_ID).sheet1
+        else:
+            logger.warning("GOOGLE_CREDENTIALS_JSON not set, Google Sheets disabled")
+            self.sheet = None
 
     def append_applicant_row(self, applicant: Applicant) -> int:
         """Append a new applicant row and return the row index."""
+        if not self.sheet:
+            logger.warning("Google Sheets not configured, skipping append")
+            return 0
+
         position = applicant.custom_position if applicant.position == "other" else applicant.position
 
         row = [
@@ -57,10 +69,14 @@ class SheetsService:
 
     def update_status(self, row_index: int, status: str) -> None:
         """Update the status column."""
+        if not self.sheet:
+            return
         self.sheet.update_cell(row_index, 16, status)
 
     def update_ai_result(self, row_index: int, ai_result: Dict[str, Any]) -> None:
         """Write AI evaluation results."""
+        if not self.sheet:
+            return
         self.sheet.update_cell(row_index, 12, ai_result.get("overall_recommendation", ""))
         self.sheet.update_cell(row_index, 13, json.dumps(ai_result.get("scores", {})))
         self.sheet.update_cell(row_index, 14, ai_result.get("short_summary", ""))
@@ -68,6 +84,8 @@ class SheetsService:
 
     def update_quiz(self, row_index: int, quiz_answers: Dict[str, Any]) -> None:
         """Merge quiz answers into the answers_json field."""
+        if not self.sheet:
+            return
         existing_raw = self.sheet.cell(row_index, 9).value or "{}"
         try:
             existing = json.loads(existing_raw)

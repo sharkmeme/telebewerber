@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     ADMIN_CHAT_ID: int
 
     # Google Sheets
-    GOOGLE_SHEETS_CREDENTIALS_FILE: Optional[str] = None
+    GOOGLE_CREDENTIALS_JSON: Optional[str] = None
     GOOGLE_SHEETS_ID: str = ""
 
     # AI Evaluation
@@ -32,9 +32,9 @@ class Settings(BaseSettings):
     INTERVIEW_LINK: str = "https://calendly.com/yourcompany/interview"
 
     # Deployment Settings
-    MODE: str = "polling"
+    MODE: str = "webhook"
     WEBHOOK_URL: str = "https://railway-app-placeholder.up.railway.app"
-    PORT: int = 8080
+    PORT: int = int(os.environ.get("PORT", "8080"))
 
     class Config:
         env_file = ".env"
