@@ -1,5 +1,5 @@
 # Telegram Bot
-python-telegram-bot==21.5
+python-telegram-bot[webhooks]==21.5
 
 # Settings Management
 pydantic-settings==2.5.2
