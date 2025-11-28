@@ -196,25 +196,30 @@ async def handle_multi_choice(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
 
     applicant = applicant_storage.get(query.from_user.id)
-    q = get_next_question(applicant)
 
-    # Guard: if no active question, bail out
+    # Find the current multi-choice question in progress
+    questions = get_question_list(applicant)
+    q = None
+    for question in questions:
+        if question["type"] == "multi_choice" and question["id"] in applicant.answers and isinstance(applicant.answers[question["id"]], list):
+            q = question
+            break
+
+    # If no in-progress multi-choice found, this must be the first click
     if not q:
-        await query.answer("No active question.")
-        context.user_data["state"] = ApplicationState.POSITION_QUESTIONS
-        return ApplicationState.POSITION_QUESTIONS
-
-    if q["id"] not in applicant.answers:
+        q = get_next_question(applicant)
+        if not q or q["type"] != "multi_choice":
+            await query.answer("No active multi-choice question.")
+            context.user_data["state"] = ApplicationState.POSITION_QUESTIONS
+            return ApplicationState.POSITION_QUESTIONS
+        # Initialize answer array
         applicant.answers[q["id"]] = []
 
     if query.data == "mul_done":
-        # Completed multi-selection
-        if get_next_question(applicant):
-            return await ask_next_position_question(update, context, applicant)
-        await query.message.reply_text("What is your full name?", reply_markup=nav_keyboard())
-        context.user_data["state"] = ApplicationState.COLLECT_NAME
-        return ApplicationState.COLLECT_NAME
+        # Completed multi-selection - move to next question
+        return await ask_next_position_question(update, context, applicant)
 
+    # Add the selected option
     choice = query.data.replace("mul_", "", 1)
     if choice not in applicant.answers[q["id"]]:
         applicant.answers[q["id"]].append(choice)
